@@ -1,2 +1,0 @@
-# Leer el texto de los PDF, página a página.
-pdfplumber>=0.11
