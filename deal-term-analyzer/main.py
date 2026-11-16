@@ -1,9 +1,9 @@
 """Enseña cómo queda troceado un contrato.
 
 Uso:
-    python main.py data/contracts/mi_contrato.pdf              tabla resumen
-    python main.py data/contracts/mi_contrato.pdf --show 5.3   texto de una section
-    python main.py data/contracts/mi_contrato.pdf --json       guarda output/<nombre>.json
+    python main.py data/contracts/mi_contrato.htm              tabla resumen
+    python main.py data/contracts/mi_contrato.htm --show 5.3   texto de una section
+    python main.py data/contracts/mi_contrato.htm --json       guarda output/<nombre>.json
 """
 
 import argparse
@@ -16,12 +16,12 @@ from deal_analyzer.ingest import check_numbering, ingest
 
 def main():
     parser = argparse.ArgumentParser(description="Trocea un contrato por Sections.")
-    parser.add_argument("pdf", help="ruta al PDF del contrato")
+    parser.add_argument("contract", help="ruta al contrato (.htm, .html o .pdf)")
     parser.add_argument("--show", metavar="N.M", help="imprime el texto de esa section")
     parser.add_argument("--json", action="store_true", help="guarda los chunks en output/")
     args = parser.parse_args()
 
-    chunks = ingest(args.pdf)
+    chunks = ingest(args.contract)
 
     if args.show:
         for chunk in chunks:
@@ -52,7 +52,7 @@ def main():
         print("Numeración continua: no falta ninguna section.")
 
     if args.json:
-        out_path = Path("output") / (Path(args.pdf).stem + ".json")
+        out_path = Path("output") / (Path(args.contract).stem + ".json")
         out_path.parent.mkdir(exist_ok=True)
         out_path.write_text(json.dumps([asdict(c) for c in chunks], indent=2, ensure_ascii=False))
         print(f"Guardado en {out_path}")

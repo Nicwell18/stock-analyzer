@@ -1,12 +1,12 @@
 """Capa 1 - Ingesta.
 
-Convierte un PDF de un contrato en una lista de "chunks" (trozos), donde cada
+Convierte un contrato (HTML o PDF) en una lista de "chunks" (trozos), donde cada
 chunk es una Section numerada del contrato (1.1, 1.2, ... 5.3, ...).
 
 El proceso tiene tres pasos, cada uno en su función:
 
-    load_pdf()      PDF            -> líneas de texto, cada una con su página
-    clean_lines()   líneas         -> líneas sin cabeceras/pies de página
+    load_html() / load_pdf()   archivo -> líneas de texto
+    clean_lines()   (solo PDF)  líneas -> líneas sin cabeceras/pies de página
     split_into_chunks()  líneas    -> lista de Chunk (uno por Section)
 
 Este archivo NO sabe nada de M&A. Solo sabe que los contratos se organizan en
@@ -17,6 +17,8 @@ import logging
 import re
 from collections import Counter
 from dataclasses import dataclass
+from html.parser import HTMLParser
+from pathlib import Path
 
 import pdfplumber
 
@@ -31,7 +33,10 @@ logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
 @dataclass
 class Line:
-    """Una línea de texto del PDF y la página de la que viene."""
+    """Una línea de texto y la página de la que viene.
+
+    El HTML no tiene páginas: en ese caso page vale 0.
+    """
     page: int
     text: str
 
@@ -65,13 +70,84 @@ class Chunk:
             where = f"{self.article} (intro)"
         else:
             where = self.kind
+        if self.page_start == 0:  # viene de un HTML: no hay páginas
+            return where
         if self.page_start == self.page_end:
             return f"{where} (p. {self.page_start})"
         return f"{where} (pp. {self.page_start}-{self.page_end})"
 
 
 # ---------------------------------------------------------------------------
-# Paso 1: PDF -> líneas
+# Paso 1 (HTML): archivo -> líneas
+# ---------------------------------------------------------------------------
+
+# Etiquetas que en pantalla empiezan en una línea nueva (párrafos, filas de
+# tabla...). El resto (<b>, <u>, <font>...) va dentro de la línea.
+BLOCK_TAGS = {"p", "div", "br", "tr", "table", "li", "hr", "center",
+              "h1", "h2", "h3", "h4", "h5", "h6"}
+SKIP_TAGS = {"script", "style", "head"}  # su contenido no es texto del contrato
+
+
+class TextExtractor(HTMLParser):
+    """Recorre el HTML y se queda solo con el texto, línea a línea.
+
+    HTMLParser (de la librería estándar) lee el archivo y nos "avisa" llamando
+    a estos métodos cada vez que encuentra una etiqueta o un trozo de texto.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.lines: list[str] = []
+        self.current = ""   # la línea que estamos construyendo
+        self.skipping = 0   # > 0 mientras estamos dentro de <script>, <style>...
+
+    def end_line(self):
+        text = " ".join(self.current.split())  # colapsa espacios y saltos
+        if text:
+            self.lines.append(text)
+        self.current = ""
+
+    def handle_starttag(self, tag, attrs):
+        if tag in SKIP_TAGS:
+            self.skipping += 1
+        elif tag in BLOCK_TAGS:
+            self.end_line()
+        elif tag == "td":
+            self.current += " "  # las celdas de una fila van en la misma línea
+
+    def handle_endtag(self, tag):
+        if tag in SKIP_TAGS:
+            self.skipping -= 1
+        elif tag in BLOCK_TAGS:
+            self.end_line()
+
+    def handle_data(self, data):
+        if not self.skipping:
+            self.current += data
+
+
+def load_html(path: str) -> list[Line]:
+    """Lee un contrato en HTML (el formato nativo de EDGAR).
+
+    Ventaja sobre el PDF: cada párrafo es UNA línea. No hay saltos de línea
+    artificiales ni cabeceras de página, así que el texto sale más limpio.
+    Lo único que quitamos son los números de página que el documento original
+    lleva como párrafos sueltos ("12", "- 12 -").
+    """
+    raw = Path(path).read_bytes()
+    try:
+        html = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        html = raw.decode("cp1252")  # codificación habitual en EDGAR antiguo
+
+    extractor = TextExtractor()
+    extractor.feed(html)
+    extractor.end_line()
+    return [Line(page=0, text=t) for t in extractor.lines if not PAGE_NUMBER_RE.match(t)]
+
+
+# ---------------------------------------------------------------------------
+# Paso 1 (PDF): archivo -> líneas
 # ---------------------------------------------------------------------------
 
 def load_pdf(path: str) -> list[Line]:
@@ -359,5 +435,16 @@ def check_numbering(chunks: list[Chunk]) -> list[str]:
 
 
 def ingest(path: str) -> list[Chunk]:
-    """La función que usará el resto del proyecto: PDF -> lista de chunks."""
-    return split_into_chunks(clean_lines(load_pdf(path)))
+    """La función que usará el resto del proyecto: archivo -> lista de chunks.
+
+    Elige el lector según la extensión. A partir de ahí el troceado es el
+    mismo: split_into_chunks no sabe de qué formato vinieron las líneas.
+    """
+    extension = Path(path).suffix.lower()
+    if extension in (".htm", ".html"):
+        lines = load_html(path)
+    elif extension == ".pdf":
+        lines = clean_lines(load_pdf(path))
+    else:
+        raise ValueError(f"Formato no soportado: {extension} (usa .htm, .html o .pdf)")
+    return split_into_chunks(lines)

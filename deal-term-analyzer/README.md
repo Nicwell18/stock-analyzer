@@ -12,7 +12,7 @@ trazable, no la escala.
 
 | Capa | Qué hace | Estado |
 |---|---|---|
-| 1. Ingesta | PDF → una pieza por cada Section del contrato | Hecha. Probada solo con un contrato sintético; falta un contrato real |
+| 1. Ingesta | HTML o PDF → una pieza por cada Section del contrato | Hecha. Probada solo con un contrato sintético; falta un contrato real |
 | 2. Extracción | Localiza las cláusulas objetivo, con cita y ubicación | Pendiente |
 | 3. Red flags | Compara cada cláusula con el playbook | Pendiente |
 | 4. Output | Tabla exportable a CSV / Markdown | Pendiente |
@@ -31,25 +31,27 @@ archivos de configuración, sin tocar el motor.
 ```bash
 pip install -r requirements.txt
 
-python main.py data/contracts/contrato.pdf              # tabla con todas las sections
-python main.py data/contracts/contrato.pdf --show 5.3   # texto literal de una section
-python main.py data/contracts/contrato.pdf --json       # guarda los chunks en output/
+python main.py data/contracts/contrato.htm              # tabla con todas las sections
+python main.py data/contracts/contrato.htm --show 5.3   # texto literal de una section
+python main.py data/contracts/contrato.htm --json       # guarda los chunks en output/
 ```
 
-Los contratos de EDGAR están en HTML. Para obtener el PDF: abrir el Exhibit 2.1
-del 8-K en el navegador e *Imprimir → Guardar como PDF*.
+Acepta `.htm` / `.html` (el formato nativo de EDGAR) y `.pdf`. Para conseguir
+un contrato: abrir el Exhibit 2.1 del 8-K en EDGAR y *Guardar página como →
+solo HTML*.
 
 ## Capa 1: cómo funciona la ingesta
 
 Todo está en `deal_analyzer/ingest.py`, en tres pasos:
 
-1. **`load_pdf`**: extrae el texto línea a línea, guardando la página de cada
-   línea (para poder citar "p. 41").
-2. **`clean_lines`**: quita cabeceras, pies y números de página. Una línea es
-   cabecera o pie si está en el borde de la página y se repite en más de la
-   mitad de las páginas.
+1. **`load_html`** o **`load_pdf`**: convierten el archivo en líneas de texto.
+   El HTML da un párrafo por línea y es más limpio; el PDF guarda además la
+   página de cada línea (para citar "p. 41").
+2. **`clean_lines`** (solo PDF): quita cabeceras, pies y números de página.
+   Una línea es cabecera o pie si está en el borde de la página y se repite en
+   más de la mitad de las páginas.
 3. **`split_into_chunks`**: abre una pieza nueva en cada encabezado
-   `Section N.M`.
+   `Section N.M`. No sabe de qué formato vinieron las líneas.
 
 ### Por qué trocear por Section y no por tamaño
 
@@ -71,7 +73,7 @@ casi siempre es un encabezado que se ha escapado.
 
 ### Limitaciones conocidas
 
-- Solo PDF con texto (no escaneados).
+- Los PDF deben tener texto (no escaneados). El HTML no tiene números de página.
 - Asume la estructura `ARTICLE` + `Section N.M`. Un contrato que numere de otra
   forma (solo "1.", "2.") no se trocea.
 - Una referencia a la section *inmediatamente siguiente*, a principio de línea
@@ -83,11 +85,12 @@ casi siempre es un encabezado que se ha escapado.
 ```
 deal_analyzer/ingest.py   capa 1
 main.py                   enseña el troceado de un contrato
-data/contracts/           contratos PDF
+data/contracts/           contratos (.htm o .pdf)
 tests/                    pruebas con un contrato sintético
 ```
 
 ## Dependencias
 
 - `pdfplumber`: extrae el texto de los PDF conservando el orden de lectura.
+  El HTML se lee con la librería estándar de Python, sin dependencias.
 - `pytest` (solo para las pruebas): `python -m pytest`.
